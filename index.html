@@ -2,684 +2,529 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="Create an invoice, print it or save it as a PDF, or copy a plain-text version for email. Your details stay in your browser.">
     <title>Invoice Generator</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='6' y='3' width='20' height='26' rx='2' fill='%231d4ed8'/%3E%3Cpath d='M10 10h12M10 15h12M10 20h7' stroke='%23fff' stroke-width='2'/%3E%3C/svg%3E">
+    <script>
+        // Apply the saved (or system) theme before first paint to avoid a flash.
+        (function () {
+            var theme = null;
+            try { theme = localStorage.getItem('invoiceGenerator.theme'); } catch (e) {}
+            if (theme !== 'light' && theme !== 'dark') {
+                theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+            }
+            document.documentElement.setAttribute('data-theme', theme);
+        })();
+    </script>
     <style>
+        /* ========== Design contract ==========
+           Type scale:  12 / 14 / 16 / 20 / 28 px
+           Spacing:     4 / 8 / 12 / 16 / 24 / 32 px
+           Radius:      one value (--radius) for controls, dialogs and the invoice sheet
+           Buttons:     default, primary, danger (+ quiet text variant)
+           Width:       one content width (8.5in) shared by header, editor and preview
+        */
         :root {
-            --bg: #f1f5f9;
-            --card-bg: #ffffff;
-            --text: #1e293b;
-            --muted: #64748b;
-            --light-muted: #94a3b8;
-            --border: #e2e8f0;
-            --accent: #0f172a;
-            --due-red: #b91c1c;
-            --input-bg: #f8fafc;
-            --input-border: #cbd5e1;
-            --input-focus: #3b82f6;
+            color-scheme: light;
+            --bg: #f4f5f7;
+            --surface: #ffffff;
+            --field-bg: #ffffff;
+            --text: #1b2230;
+            --muted: #4d5766;
+            --border: #d3d8e0;
+            --border-strong: #7b8696;
+            --hover: #eef1f5;
+            --accent: #1d4ed8;
+            --accent-hover: #1e40af;
+            --on-accent: #ffffff;
+            --danger: #b42318;
+            --on-danger: #ffffff;
+            --focus: #1d4ed8;
+            --backdrop: rgba(15, 19, 24, 0.55);
+            --radius: 6px;
+            --content: 8.5in;
+            --gutter: 16px;
+        }
+        :root[data-theme="dark"] {
+            color-scheme: dark;
+            --bg: #0f1318;
+            --surface: #171c23;
+            --field-bg: #0f1318;
+            --text: #e7eaf0;
+            --muted: #a4adba;
+            --border: #2f3742;
+            --border-strong: #6b7686;
+            --hover: #212833;
+            --accent: #7aa7ff;
+            --accent-hover: #9bbcff;
+            --on-accent: #0b1220;
+            --danger: #ff9b91;
+            --on-danger: #1a0a08;
+            --focus: #9bbcff;
+            --backdrop: rgba(0, 0, 0, 0.65);
         }
 
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
+        *, *::before, *::after { box-sizing: border-box; }
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
             background: var(--bg);
-            padding: 30px 20px;
             color: var(--text);
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 24px;
-        }
-
-        /* Toast notification */
-        .toast {
-            position: fixed;
-            top: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: #0f172a;
-            color: white;
-            padding: 12px 24px;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 600;
-            z-index: 9999;
-            opacity: 0;
-            transition: opacity 0.3s;
-            pointer-events: none;
-        }
-        .toast.show {
-            opacity: 1;
-        }
-
-        /* === Editor Panel === */
-        .editor-panel {
-            width: 100%;
-            max-width: 8.5in;
-            background: var(--card-bg);
-            border-radius: 12px;
-            padding: 28px 32px;
-            box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06);
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-        }
-        .editor-panel h2 {
-            font-size: 18px;
-            font-weight: 700;
-            color: var(--accent);
-            letter-spacing: -0.3px;
-            margin-bottom: -8px;
-        }
-        .editor-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 16px 24px;
-        }
-        .editor-grid.full-width {
-            grid-template-columns: 1fr;
-        }
-        .field-group {
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-        }
-        .field-group label {
-            font-size: 11px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 1.5px;
-            color: var(--light-muted);
-        }
-        .field-group input,
-        .field-group textarea,
-        .field-group select {
-            font-family: inherit;
-            font-size: 14px;
-            padding: 10px 12px;
-            border: 1.5px solid var(--input-border);
-            border-radius: 8px;
-            background: var(--input-bg);
-            color: var(--text);
-            transition: border 0.15s, box-shadow 0.15s;
-            resize: vertical;
-            min-width: 0;
-        }
-        .field-group input:focus,
-        .field-group textarea:focus,
-        .field-group select:focus {
-            outline: none;
-            border-color: var(--input-focus);
-            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-        }
-        .field-group textarea {
-            min-height: 70px;
-        }
-        .field-row {
-            display: flex;
-            gap: 16px;
-        }
-        .field-row .field-group {
-            flex: 1;
-        }
-
-        /* === Line Items Editor === */
-        .line-items-section {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
-        .line-item-row {
-            display: grid;
-            grid-template-columns: 2fr 1fr 1fr 1fr 40px;
-            gap: 10px;
-            align-items: end;
-        }
-        .line-item-row.header-row {
-            font-size: 10px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 1.5px;
-            color: var(--light-muted);
-            padding-bottom: 2px;
-        }
-        .line-item-row.header-row span {
-            padding: 0 4px;
-        }
-        .line-item-row input {
-            font-family: inherit;
-            font-size: 13px;
-            padding: 8px 10px;
-            border: 1.5px solid var(--input-border);
-            border-radius: 8px;
-            background: var(--input-bg);
-            color: var(--text);
-            min-width: 0;
-        }
-        .line-item-row input:focus {
-            outline: none;
-            border-color: var(--input-focus);
-            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-        }
-        .line-item-row .amount-display {
-            font-size: 14px;
-            font-weight: 600;
-            color: var(--accent);
-            padding: 8px 4px;
-            text-align: right;
-        }
-        .btn-icon {
-            background: none;
-            border: 1.5px solid #fecaca;
-            color: #b91c1c;
-            border-radius: 8px;
-            cursor: pointer;
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
             font-size: 16px;
-            padding: 6px 0;
-            text-align: center;
-            transition: all 0.15s;
-            line-height: 1;
+            line-height: 1.5;
         }
-        .btn-icon:hover {
-            background: #fef2f2;
-            border-color: #f87171;
-        }
-        .btn-add {
-            background: var(--accent);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            padding: 10px 20px;
-            font-size: 13px;
-            font-weight: 600;
-            cursor: pointer;
-            align-self: flex-start;
-            transition: background 0.15s;
-        }
-        .btn-add:hover {
-            background: #1e293b;
+        h1, h2, p { margin: 0; }
+        button, input, select, textarea { font: inherit; color: inherit; }
+        :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+        .sr-only {
+            position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+            overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
         }
 
-        /* === Profile bar === */
-        .profile-bar {
+        .page {
+            max-width: calc(var(--content) + 2 * var(--gutter));
+            margin: 0 auto;
+            padding: 24px var(--gutter) 48px;
             display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            align-items: center;
-            padding: 12px 14px;
-            background: var(--input-bg);
-            border: 1.5px solid var(--border);
-            border-radius: 10px;
+            flex-direction: column;
+            gap: 32px;
         }
-        .profile-bar label {
-            font-size: 11px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 1.5px;
-            color: var(--light-muted);
-        }
-        .profile-bar select {
-            font-family: inherit;
-            font-size: 14px;
-            padding: 8px 10px;
-            border: 1.5px solid var(--input-border);
-            border-radius: 8px;
-            background: white;
-            color: var(--text);
-            min-width: 160px;
-        }
-        .profile-bar .spacer { flex: 1; }
-        .btn-sm {
-            padding: 8px 14px;
-            font-size: 13px;
-        }
+        @media (min-width: 720px) { :root { --gutter: 24px; } }
 
-        /* === Buttons === */
-        .button-bar {
-            display: flex;
-            gap: 12px;
-            flex-wrap: wrap;
-        }
+        /* ---------- Page header ---------- */
+        .title-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+        h1 { font-size: 28px; line-height: 1.2; font-weight: 700; }
+        .lede { margin-top: 8px; color: var(--muted); max-width: 60ch; }
+
+        /* ---------- Buttons ---------- */
         .btn {
-            padding: 12px 28px;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 600;
+            display: inline-flex; align-items: center; justify-content: center;
+            min-height: 40px; padding: 8px 14px;
+            font-size: 14px; font-weight: 600; line-height: 1.2;
+            background: var(--surface);
+            border: 1px solid var(--border-strong);
+            border-radius: var(--radius);
             cursor: pointer;
-            border: none;
-            transition: all 0.15s;
-            text-decoration: none;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
         }
-        .btn-primary {
-            background: var(--accent);
-            color: white;
-        }
-        .btn-primary:hover {
-            background: #1e293b;
-        }
-        .btn-secondary {
-            background: white;
-            color: var(--accent);
-            border: 1.5px solid var(--input-border);
-        }
-        .btn-secondary:hover {
-            background: #f8fafc;
-        }
-        .btn-copy {
-            background: #2563eb;
-            color: white;
-        }
-        .btn-copy:hover {
-            background: #1d4ed8;
-        }
+        .btn:hover { background: var(--hover); }
+        .btn-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+        .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+        .btn-danger { background: var(--danger); border-color: var(--danger); color: var(--on-danger); }
+        .btn-danger:hover { background: var(--danger); filter: brightness(0.92); }
+        .btn-danger-quiet { color: var(--danger); border-color: var(--danger); }
+        .btn-quiet { border-color: transparent; background: transparent; }
+        .btn-quiet:hover { background: var(--hover); border-color: var(--border); }
+        .toggle-state { margin-left: 8px; padding-left: 8px; border-left: 1px solid var(--border-strong); font-weight: 400; }
+        .btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
+        @media (pointer: coarse) { .btn, input, select { min-height: 44px; } }
 
-        /* === Modal for plaintext === */
-        .modal-overlay {
-            display: none;
-            position: fixed;
-            inset: 0;
-            background: rgba(15, 23, 42, 0.6);
-            z-index: 1000;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
-        }
-        .modal-overlay.active {
-            display: flex;
-        }
-        .modal {
-            background: white;
-            border-radius: 12px;
-            padding: 28px 32px;
-            max-width: 650px;
-            width: 100%;
-            max-height: 80vh;
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
-        }
-        .modal h3 {
-            font-size: 16px;
-            font-weight: 700;
-            color: var(--accent);
-        }
-        .modal textarea {
-            font-family: 'Courier New', Courier, monospace;
-            font-size: 13px;
-            padding: 16px;
-            border: 1.5px solid var(--input-border);
-            border-radius: 8px;
-            background: #f8fafc;
-            color: var(--text);
-            resize: vertical;
-            min-height: 300px;
-            flex: 1;
-            white-space: pre;
-            overflow-wrap: normal;
-            overflow-x: auto;
-        }
-        .modal textarea:focus {
-            outline: none;
-            border-color: var(--input-focus);
-        }
-        .modal-buttons {
-            display: flex;
-            gap: 10px;
-            justify-content: flex-end;
-        }
+        /* ---------- Editor ---------- */
+        .editor { display: flex; flex-direction: column; gap: 24px; }
+        .profile-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+        .profile-row label { font-size: 14px; font-weight: 600; }
+        .profile-row select { min-width: 0; flex: 0 1 260px; }
+        .save-status { margin-left: auto; font-size: 12px; color: var(--muted); }
+        .save-status.warn { color: var(--danger); font-weight: 600; }
 
-        /* === Invoice Preview === */
-        .preview-container {
-            width: 8.5in;
-            background: white;
-            padding: 50px 60px;
-            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
-            border-radius: 4px;
+        details.manage summary { cursor: pointer; font-size: 14px; color: var(--muted); padding: 4px 0; width: fit-content; }
+        details.manage summary:hover { color: var(--text); }
+        .manage-body { display: flex; flex-direction: column; gap: 12px; padding: 12px 0 4px; }
+
+        .group { border-top: 1px solid var(--border); padding-top: 24px; display: flex; flex-direction: column; gap: 16px; }
+        .group > h2 { font-size: 20px; line-height: 1.3; font-weight: 700; }
+        .grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+        @media (min-width: 640px) { .grid { grid-template-columns: 1fr 1fr; } .grid .wide { grid-column: 1 / -1; } }
+
+        .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+        .field > label, .cell > label, .cell > .cell-label { font-size: 14px; font-weight: 600; }
+        .opt { font-weight: 400; color: var(--muted); }
+        .hint { font-size: 14px; color: var(--muted); }
+        .field-note { font-size: 12px; color: var(--danger); min-height: 0; }
+        input, select, textarea {
+            width: 100%; min-width: 0; min-height: 40px;
+            padding: 8px 10px; font-size: 16px;
+            background: var(--field-bg);
+            border: 1px solid var(--border-strong);
+            border-radius: var(--radius);
         }
+        input::placeholder { color: var(--muted); opacity: 0.8; }
+        input[aria-invalid="true"] { border-color: var(--danger); }
+
+        /* Line items */
+        .item-head, .item-row { display: grid; grid-template-columns: minmax(0, 1fr) 7rem 7rem 6.5rem 5.5rem; gap: 8px; align-items: start; }
+        .item-head { font-size: 14px; font-weight: 600; }
+        .item-head span:nth-child(4) { text-align: right; }
+        .item-list { display: flex; flex-direction: column; gap: 8px; }
+        .cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+        .cell > label, .cell > .cell-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+        .cell .amount { min-height: 40px; display: flex; align-items: center; justify-content: flex-end; font-variant-numeric: tabular-nums; font-weight: 600; }
+        .cell-remove .btn { width: 100%; }
+        @media (max-width: 639px) {
+            .item-head { display: none; }
+            .item-list { gap: 16px; }
+            .item-row { grid-template-columns: 1fr 1fr 1fr; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+            .cell-desc, .cell-remove { grid-column: 1 / -1; }
+            .cell > label, .cell > .cell-label { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
+            .cell .amount { justify-content: flex-start; }
+            .cell-remove .btn { width: auto; align-self: flex-start; }
+        }
+        .items-footer { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 16px; }
+        .tax-field { width: 9rem; }
+        .summary { margin: 0; display: grid; grid-template-columns: auto auto; gap: 4px 24px; font-variant-numeric: tabular-nums; }
+        .summary dt { color: var(--muted); }
+        .summary dd { margin: 0; text-align: right; }
+        .summary .total { font-weight: 700; font-size: 20px; color: var(--text); }
+
+        .actions { border-top: 1px solid var(--border); padding-top: 24px; }
+
+        /* ---------- Preview ---------- */
+        .preview > h2 { font-size: 20px; line-height: 1.3; font-weight: 700; margin-bottom: 12px; }
+
+        /* The invoice is a sheet of paper: it keeps light colors in both themes so it prints as shown. */
+        .paper {
+            --p-text: #1b2230; --p-muted: #4d5766; --p-label: #5b6574; --p-rule: #d5dae2; --p-faint: #eceff3; --p-due: #b42318;
+            background: #fff; color: var(--p-text);
+            padding: clamp(16px, 5vw, 56px);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow-wrap: anywhere;
+        }
+        .paper .ph { color: var(--p-muted); font-style: italic; font-weight: 400; }
+        .inv-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 32px; }
+        .inv-company { font-size: 24px; line-height: 1.2; font-weight: 700; }
+        .inv-tagline { font-size: 14px; color: var(--p-muted); margin-top: 4px; }
+        .inv-title { text-align: right; margin-left: auto; }
+        .inv-label { font-size: 14px; color: var(--p-label); }
+        .inv-number { font-size: 24px; line-height: 1.2; font-weight: 300; }
+        .inv-meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 24px; padding-bottom: 24px; margin-bottom: 24px; border-bottom: 1px solid var(--p-rule); }
+        .inv-meta h3, .inv-dlabel, .inv-table th { margin: 0 0 4px; font-size: 12px; font-weight: 600; color: var(--p-label); }
+        .inv-meta p { font-size: 14px; line-height: 1.5; }
+        .inv-name { font-weight: 600; }
+        .inv-detail-row { display: flex; flex-wrap: wrap; gap: 16px 32px; margin-bottom: 24px; }
+        .inv-detail-item { display: flex; flex-direction: column; }
+        .inv-dvalue { font-size: 14px; font-weight: 500; }
+        .inv-dvalue.due { color: var(--p-due); font-weight: 600; }
+        .table-scroll { overflow-x: auto; margin-bottom: 24px; }
+        .inv-table { width: 100%; min-width: 420px; border-collapse: collapse; }
+        .inv-table th { padding: 8px 8px; border-bottom: 2px solid var(--p-rule); text-align: left; }
+        .inv-table td { padding: 12px 8px; font-size: 14px; border-bottom: 1px solid var(--p-faint); vertical-align: top; font-variant-numeric: tabular-nums; }
+        .inv-table .r { text-align: right; }
+        .inv-totals-wrap { display: flex; justify-content: flex-end; margin-bottom: 32px; }
+        .inv-totals { width: min(100%, 260px); border-collapse: collapse; font-variant-numeric: tabular-nums; }
+        .inv-totals td { padding: 4px 0; font-size: 14px; }
+        .inv-totals td:last-child { text-align: right; }
+        .inv-totals .grand td { font-size: 20px; font-weight: 700; border-top: 2px solid var(--p-text); padding-top: 8px; }
+        .inv-footer { border-top: 1px solid var(--p-rule); padding-top: 16px; text-align: center; }
+        .inv-thanks { font-size: 16px; font-weight: 500; margin-bottom: 4px; }
+        .inv-contact { font-size: 14px; color: var(--p-muted); }
+
+        /* ---------- Dialogs and status ---------- */
+        dialog {
+            width: min(92vw, 440px); max-height: 90vh; padding: 0;
+            background: var(--surface); color: var(--text);
+            border: 1px solid var(--border-strong); border-radius: var(--radius);
+        }
+        dialog.wide { width: min(92vw, 680px); }
+        dialog::backdrop { background: var(--backdrop); }
+        .dialog-body { padding: 24px; display: flex; flex-direction: column; gap: 16px; }
+        .dialog-body h2 { font-size: 20px; line-height: 1.3; }
+        .dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+        #confirmMessage { white-space: pre-line; color: var(--muted); }
+        #plainOutput { min-height: 320px; font-family: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace; font-size: 13px; line-height: 1.4; white-space: pre; overflow: auto; resize: vertical; }
+        .dialog-note { font-size: 14px; min-height: 21px; color: var(--muted); }
+        .dialog-note.err, #nameError { color: var(--danger); font-size: 14px; }
+        #nameError:empty { display: none; }
+
+        .toast {
+            position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+            max-width: min(92vw, 520px);
+            background: var(--text); color: var(--bg);
+            padding: 8px 16px; border-radius: var(--radius);
+            font-size: 14px; font-weight: 600; text-align: center;
+            z-index: 2000; opacity: 0; pointer-events: none; transition: opacity 0.2s;
+        }
+        .toast.show { opacity: 1; }
+        @media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
+
+        noscript p { padding: 16px; margin: 16px; border: 1px solid var(--danger); border-radius: var(--radius); }
+
         @media print {
-            body {
-                background: white;
-                padding: 0;
-            }
-            .editor-panel,
-            .button-bar,
-            .toast,
-            .modal-overlay {
-                display: none !important;
-            }
-            .preview-container {
-                box-shadow: none;
-                border-radius: 0;
-                width: 100%;
-                padding: 40px;
-                page-break-after: avoid;
-            }
-        }
-
-        /* === Invoice Internal Styles === */
-        .inv-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            margin-bottom: 40px;
-        }
-        .inv-logo .inv-company {
-            font-size: 26px;
-            font-weight: 700;
-            color: #0f172a;
-            letter-spacing: -0.5px;
-        }
-        .inv-logo .inv-tagline {
-            font-size: 12px;
-            color: #64748b;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-            margin-top: 2px;
-        }
-        .inv-title .inv-label {
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 3px;
-            color: #94a3b8;
-            font-weight: 600;
-            text-align: right;
-        }
-        .inv-title .inv-number {
-            font-size: 32px;
-            font-weight: 300;
-            color: #0f172a;
-            text-align: right;
-        }
-        .inv-meta-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 40px;
-            margin-bottom: 30px;
-            padding-bottom: 24px;
-            border-bottom: 1px solid #e2e8f0;
-        }
-        .inv-meta h3 {
-            font-size: 10px;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-            color: #94a3b8;
-            margin-bottom: 8px;
-            font-weight: 700;
-        }
-        .inv-meta p {
-            font-size: 14px;
-            line-height: 1.4;
-            color: #334155;
-        }
-        .inv-meta .inv-name {
-            font-weight: 600;
-            color: #0f172a;
-        }
-        .inv-detail-row {
-            display: flex;
-            gap: 40px;
-            margin-bottom: 30px;
-            flex-wrap: wrap;
-        }
-        .inv-detail-item {
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-        }
-        .inv-detail-item .inv-dlabel {
-            font-size: 10px;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-            color: #94a3b8;
-            font-weight: 700;
-        }
-        .inv-detail-item .inv-dvalue {
-            font-size: 14px;
-            color: #0f172a;
-            font-weight: 500;
-        }
-        .inv-detail-item .inv-dvalue.due {
-            color: #b91c1c;
-            font-weight: 600;
-        }
-        .inv-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-bottom: 30px;
-        }
-        .inv-table thead th {
-            font-size: 10px;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-            color: #94a3b8;
-            font-weight: 700;
-            padding: 12px 10px;
-            border-bottom: 2px solid #e2e8f0;
-            text-align: left;
-        }
-        .inv-table thead th.ralign {
-            text-align: right;
-        }
-        .inv-table tbody td {
-            padding: 14px 10px;
-            font-size: 14px;
-            color: #334155;
-            border-bottom: 1px solid #f1f5f9;
-            vertical-align: top;
-        }
-        .inv-table tbody td.ralign {
-            text-align: right;
-            font-weight: 500;
-            color: #0f172a;
-        }
-        .inv-totals-wrap {
-            display: flex;
-            justify-content: flex-end;
-            margin-bottom: 40px;
-        }
-        .inv-totals-table {
-            width: 260px;
-            border-collapse: collapse;
-        }
-        .inv-totals-table td {
-            padding: 8px 0;
-            font-size: 14px;
-            color: #334155;
-        }
-        .inv-totals-table td:last-child {
-            text-align: right;
-            font-weight: 500;
-            color: #0f172a;
-        }
-        .inv-totals-table .grand td {
-            font-size: 20px;
-            font-weight: 700;
-            color: #0f172a;
-            border-top: 2px solid #0f172a;
-            padding-top: 12px;
-        }
-        .inv-totals-table .grand td:last-child {
-            color: #0f172a;
-        }
-        .inv-footer {
-            border-top: 1px solid #e2e8f0;
-            padding-top: 20px;
-            text-align: center;
-            font-size: 13px;
-            color: #64748b;
-            line-height: 1.6;
-        }
-        .inv-footer .inv-thanks {
-            font-size: 15px;
-            color: #0f172a;
-            font-weight: 500;
-            margin-bottom: 6px;
-        }
-        .inv-footer .inv-contact {
-            font-size: 12px;
-            color: #94a3b8;
+            :root { color-scheme: light; }
+            body { background: #fff; }
+            .no-print, .toast, dialog { display: none !important; }
+            .page { max-width: none; padding: 0; gap: 0; display: block; }
+            .paper { border: 0; border-radius: 0; padding: 0; }
+            @page { margin: 0.6in; }
         }
     </style>
 </head>
 <body>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <noscript><p>This invoice generator needs JavaScript. Turn it on for this page and reload.</p></noscript>
 
-    <!-- Toast -->
-    <div class="toast" id="toast">✓ Copied to clipboard!</div>
+    <main class="page">
+        <header class="no-print">
+            <div class="title-row">
+                <h1>Invoice Generator</h1>
+                <button type="button" class="btn btn-quiet" id="themeToggle" aria-pressed="false">Dark mode<span class="toggle-state" id="themeState" aria-hidden="true">Off</span></button>
+            </div>
+            <p class="lede">Fill in the details, then print the invoice, save it as a PDF, or copy a plain-text version for email. Everything stays in this browser; nothing is uploaded.</p>
+        </header>
 
-    <!-- ==================== EDITOR ==================== -->
-    <div class="editor-panel" id="editorPanel">
-        <h2>📝 Invoice Editor</h2>
+        <div class="editor no-print">
+            <div>
+                <div class="profile-row">
+                    <label for="profileSelect">Profile</label>
+                    <select id="profileSelect"></select>
+                    <button type="button" class="btn" id="newProfileBtn">New profile</button>
+                    <span class="save-status" id="saveStatus"></span>
+                </div>
+                <details class="manage">
+                    <summary>Manage profiles and data</summary>
+                    <div class="manage-body">
+                        <p class="hint">A profile saves every field below, including line items. Use separate profiles for different businesses or clients, and export them to use on another computer.</p>
+                        <div class="btn-row">
+                            <button type="button" class="btn" id="renameBtn">Rename profile</button>
+                            <button type="button" class="btn" id="duplicateBtn">Duplicate profile</button>
+                            <button type="button" class="btn" id="exportBtn">Export profiles</button>
+                            <button type="button" class="btn" id="importBtn">Import profiles</button>
+                            <input type="file" id="importFile" accept="application/json,.json" hidden>
+                        </div>
+                        <div class="btn-row">
+                            <button type="button" class="btn btn-danger-quiet" id="deleteBtn">Delete this profile</button>
+                            <button type="button" class="btn btn-danger-quiet" id="clearBtn">Clear all saved data</button>
+                        </div>
+                    </div>
+                </details>
+            </div>
 
-        <!-- Profiles + import/export -->
-        <div class="profile-bar">
-            <label for="profileSelect">Profile</label>
-            <select id="profileSelect" onchange="switchProfile(this.value)"></select>
-            <button class="btn btn-secondary btn-sm" onclick="newProfile()">+ New</button>
-            <button class="btn btn-secondary btn-sm" onclick="duplicateProfile()">Duplicate</button>
-            <button class="btn btn-secondary btn-sm" onclick="renameProfile()">Rename</button>
-            <button class="btn btn-secondary btn-sm" onclick="deleteProfile()">Delete</button>
-            <span class="spacer"></span>
-            <button class="btn btn-secondary btn-sm" onclick="exportData()">⬇ Export JSON</button>
-            <button class="btn btn-secondary btn-sm" onclick="document.getElementById('importFile').click()">⬆ Import JSON</button>
-            <input type="file" id="importFile" accept="application/json,.json" style="display:none" onchange="importData(this)">
+            <div class="group" role="group" aria-labelledby="h-you">
+                <h2 id="h-you">Your details</h2>
+                <div class="grid">
+                    <div class="field">
+                        <label for="bizName">Business or name</label>
+                        <input type="text" id="bizName" placeholder="Your business name" autocomplete="off">
+                    </div>
+                    <div class="field">
+                        <label for="bizTagline">Tagline <span class="opt">(optional)</span></label>
+                        <input type="text" id="bizTagline" placeholder="Services &amp; consulting" autocomplete="off">
+                    </div>
+                    <div class="field">
+                        <label for="remitTo">Remit to</label>
+                        <input type="text" id="remitTo" placeholder="Name on the payment" autocomplete="off">
+                    </div>
+                    <div class="field">
+                        <label for="remitInstructions">Payment instructions <span class="opt">(optional)</span></label>
+                        <input type="text" id="remitInstructions" placeholder="e.g. Venmo: @yourhandle" autocomplete="off">
+                    </div>
+                    <div class="field">
+                        <label for="email">Email <span class="opt">(optional)</span></label>
+                        <input type="email" id="email" placeholder="you@example.com" autocomplete="email">
+                    </div>
+                    <div class="field">
+                        <label for="phone">Phone <span class="opt">(optional)</span></label>
+                        <input type="tel" id="phone" placeholder="(555) 555-5555" autocomplete="tel">
+                    </div>
+                    <div class="field wide">
+                        <label for="thanksMsg">Closing message <span class="opt">(optional)</span></label>
+                        <input type="text" id="thanksMsg" autocomplete="off">
+                    </div>
+                </div>
+            </div>
+
+            <div class="group" role="group" aria-labelledby="h-bill">
+                <h2 id="h-bill">Bill to</h2>
+                <div class="grid">
+                    <div class="field">
+                        <label for="billName">Client name</label>
+                        <input type="text" id="billName" placeholder="Client or company" autocomplete="off">
+                    </div>
+                    <div class="field">
+                        <label for="billAttn">Attention <span class="opt">(optional)</span></label>
+                        <input type="text" id="billAttn" placeholder="Contact person or title" autocomplete="off">
+                    </div>
+                    <div class="field">
+                        <label for="billAddr1">Street address <span class="opt">(optional)</span></label>
+                        <input type="text" id="billAddr1" placeholder="123 Main St" autocomplete="off">
+                    </div>
+                    <div class="field">
+                        <label for="billAddr2">City, state, ZIP <span class="opt">(optional)</span></label>
+                        <input type="text" id="billAddr2" placeholder="Springfield, ST 12345" autocomplete="off">
+                    </div>
+                </div>
+            </div>
+
+            <div class="group" role="group" aria-labelledby="h-inv">
+                <h2 id="h-inv">Invoice details</h2>
+                <div class="grid">
+                    <div class="field">
+                        <label for="invNumber">Invoice number</label>
+                        <input type="text" id="invNumber" placeholder="INV-0001" autocomplete="off">
+                    </div>
+                    <div class="field">
+                        <label for="paymentTerms">Payment terms</label>
+                        <select id="paymentTerms">
+                            <option value="net15">Net 15</option>
+                            <option value="net30">Net 30</option>
+                            <option value="dueReceipt">Due upon receipt</option>
+                            <option value="custom">Custom due date</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="dateIssued">Date issued</label>
+                        <input type="date" id="dateIssued">
+                    </div>
+                    <div class="field">
+                        <label for="dueDate">Due date</label>
+                        <input type="date" id="dueDate" aria-describedby="dueNote">
+                        <p class="field-note" id="dueNote"></p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="group" role="group" aria-labelledby="h-items">
+                <h2 id="h-items">Line items</h2>
+                <div>
+                    <div class="item-head" aria-hidden="true"><span>Description</span><span>Quantity</span><span>Rate ($)</span><span>Amount</span><span></span></div>
+                    <div class="item-list" id="lineItems"></div>
+                </div>
+                <div class="btn-row"><button type="button" class="btn" id="addItemBtn">Add line item</button></div>
+                <p class="hint">Quantity can include a unit, such as “2 hosts”. If it has no number, it counts as 1.</p>
+                <div class="items-footer">
+                    <div class="field tax-field">
+                        <label for="taxRate">Tax rate (%)</label>
+                        <input type="number" id="taxRate" min="0" max="100" step="0.01" inputmode="decimal">
+                    </div>
+                    <dl class="summary" id="summary"></dl>
+                </div>
+            </div>
+
+            <div class="actions btn-row">
+                <button type="button" class="btn btn-primary" id="printBtn">Print or save as PDF</button>
+                <button type="button" class="btn" id="plainBtn">Plain text for email…</button>
+            </div>
         </div>
 
-        <!-- Invoice meta -->
-        <div class="editor-grid">
-            <div class="field-group">
-                <label>Your Business / Name</label>
-                <input type="text" id="bizName" placeholder="Your Business Name" oninput="updatePreview()">
-            </div>
-            <div class="field-group">
-                <label>Tagline (optional)</label>
-                <input type="text" id="bizTagline" placeholder="Services &amp; Consulting" oninput="updatePreview()">
-            </div>
-            <div class="field-group">
-                <label>Invoice #</label>
-                <input type="text" id="invNumber" placeholder="INV-0001" oninput="updatePreview()">
-            </div>
-            <div class="field-group">
-                <label>Payment Terms</label>
-                <select id="paymentTerms" onchange="updatePreview(); updateDueDate();">
-                    <option value="net15">Net 15</option>
-                    <option value="net30">Net 30</option>
-                    <option value="dueReceipt">Due Upon Receipt</option>
-                    <option value="custom">Custom</option>
-                </select>
-            </div>
-            <div class="field-group">
-                <label>Date Issued</label>
-                <input type="date" id="dateIssued" onchange="updateDueDate(); updatePreview();">
-            </div>
-            <div class="field-group">
-                <label>Due Date</label>
-                <input type="date" id="dueDate" onchange="updatePreview(); syncCustomTerm();">
-            </div>
-            <div class="field-group">
-                <label>Remit To</label>
-                <input type="text" id="remitTo" value="" placeholder="Your Name" oninput="updatePreview()">
-            </div>
-            <div class="field-group">
-                <label>Remit Instructions (e.g. Venmo)</label>
-                <input type="text" id="remitInstructions" value="" placeholder="e.g. Venmo: @yourhandle" oninput="updatePreview()">
-            </div>
-            <div class="field-group">
-                <label>Your Email</label>
-                <input type="email" id="email" value="" placeholder="you@example.com" oninput="updatePreview()">
-            </div>
-            <div class="field-group">
-                <label>Your Phone</label>
-                <input type="text" id="phone" value="" placeholder="(555) 555-5555" oninput="updatePreview()">
-            </div>
-            <div class="field-group">
-                <label>Bill To – Name</label>
-                <input type="text" id="billName" value="" placeholder="Client Name" oninput="updatePreview()">
-            </div>
-            <div class="field-group">
-                <label>Bill To – Attn</label>
-                <input type="text" id="billAttn" value="" placeholder="Contact Person" oninput="updatePreview()">
-            </div>
-            <div class="field-group">
-                <label>Bill To – Address</label>
-                <input type="text" id="billAddr1" value="" placeholder="123 Main St" oninput="updatePreview()">
-            </div>
-            <div class="field-group">
-                <label>Bill To – City / State / ZIP</label>
-                <input type="text" id="billAddr2" value="" placeholder="City, ST 12345" oninput="updatePreview()">
+        <section class="preview" aria-labelledby="h-preview">
+            <h2 id="h-preview" class="no-print">Preview</h2>
+            <div class="paper" id="invoicePreview"></div>
+        </section>
+    </main>
+
+    <dialog id="plainDialog" class="wide" aria-labelledby="plainTitle">
+        <div class="dialog-body">
+            <h2 id="plainTitle">Plain-text invoice</h2>
+            <textarea id="plainOutput" readonly wrap="off" aria-labelledby="plainTitle"></textarea>
+            <p class="dialog-note" id="plainNote" role="status"></p>
+            <div class="dialog-actions">
+                <button type="button" class="btn" id="plainClose">Close</button>
+                <button type="button" class="btn btn-primary" id="plainCopy">Copy to clipboard</button>
             </div>
         </div>
+    </dialog>
 
-        <!-- Line Items -->
-        <div class="line-items-section">
-            <div class="line-item-row header-row">
-                <span>Description</span><span>Qty / Detail</span><span>Rate ($)</span><span>Amount</span><span></span>
+    <dialog id="nameDialog" aria-labelledby="nameTitle">
+        <form method="dialog" id="nameForm" class="dialog-body" novalidate>
+            <h2 id="nameTitle"></h2>
+            <div class="field">
+                <label for="nameInput">Profile name</label>
+                <input type="text" id="nameInput" maxlength="60" autocomplete="off" aria-describedby="nameError">
+                <p id="nameError"></p>
             </div>
-            <div id="lineItemsContainer">
-                <!-- Dynamically filled -->
+            <div class="dialog-actions">
+                <button type="button" class="btn" id="nameCancel">Cancel</button>
+                <button type="submit" class="btn btn-primary" id="nameSubmit" value="ok"></button>
             </div>
-            <button class="btn-add" onclick="addLineItem()">+ Add Line Item</button>
-        </div>
+        </form>
+    </dialog>
 
-        <!-- Tax & Actions -->
-        <div class="editor-grid" style="margin-top: 8px;">
-            <div class="field-group">
-                <label>Tax Rate (%)</label>
-                <input type="number" id="taxRate" value="0" min="0" max="100" step="0.01" oninput="updatePreview()">
-            </div>
-            <div class="field-group">
-                <label>Thank-You Message</label>
-                <input type="text" id="thanksMsg" value="Thank you for your business!" oninput="updatePreview()">
-            </div>
-        </div>
-
-        <div class="button-bar">
-            <button class="btn btn-primary" onclick="printInvoice()">🖨️ Print / Save as PDF</button>
-            <button class="btn btn-copy" onclick="openPlaintextModal()">📋 Copy Plaintext for Email</button>
-            <button class="btn btn-secondary" onclick="resetForm()">↺ Clear All Saved Data</button>
-        </div>
-    </div>
-
-    <!-- ==================== PLAINTEXT MODAL ==================== -->
-    <div class="modal-overlay" id="plaintextModal">
-        <div class="modal">
-            <h3>📧 Email-Ready Plaintext Invoice</h3>
-            <textarea id="plaintextOutput" readonly></textarea>
-            <div class="modal-buttons">
-                <button class="btn btn-secondary" onclick="closePlaintextModal()">Close</button>
-                <button class="btn btn-copy" onclick="copyPlaintext()">📋 Copy to Clipboard</button>
+    <dialog id="confirmDialog" aria-labelledby="confirmTitle" aria-describedby="confirmMessage">
+        <div class="dialog-body">
+            <h2 id="confirmTitle"></h2>
+            <p id="confirmMessage"></p>
+            <div class="dialog-actions">
+                <button type="button" class="btn" id="confirmCancel">Cancel</button>
+                <button type="button" class="btn btn-danger" id="confirmOk"></button>
             </div>
         </div>
-    </div>
-
-    <!-- ==================== INVOICE PREVIEW ==================== -->
-    <div class="preview-container" id="invoicePreview">
-        <!-- Populated by JavaScript -->
-    </div>
+    </dialog>
 
     <script>
-        // ========== DATA STORE ==========
-        let lineItems = [
-            { desc: '', qty: '1', rate: '0.00' }
-        ];
+        const $ = id => document.getElementById(id);
 
-        // ========== LOCAL STORAGE / PROFILES ==========
+        // ========== THEME ==========
+        const THEME_KEY = 'invoiceGenerator.theme';
+        const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+
+        function storedTheme() {
+            try {
+                const t = localStorage.getItem(THEME_KEY);
+                return (t === 'light' || t === 'dark') ? t : null;
+            } catch (e) { return null; }
+        }
+
+        function setTheme(theme, remember) {
+            document.documentElement.setAttribute('data-theme', theme);
+            $('themeToggle').setAttribute('aria-pressed', String(theme === 'dark'));
+            $('themeState').textContent = theme === 'dark' ? 'On' : 'Off';
+            if (remember) { try { localStorage.setItem(THEME_KEY, theme); } catch (e) { /* session only */ } }
+        }
+
+        $('themeToggle').addEventListener('click', () => {
+            const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            setTheme(next, true);
+        });
+        darkQuery.addEventListener('change', e => { if (!storedTheme()) setTheme(e.matches ? 'dark' : 'light', false); });
+        setTheme(document.documentElement.getAttribute('data-theme'), false);
+
+        // ========== MESSAGES ==========
+        let toastTimer;
+        function showToast(message, ms) {
+            const t = $('toast');
+            t.textContent = message;
+            t.classList.add('show');
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => t.classList.remove('show'), ms || 2500);
+        }
+
+        // ========== HELPERS ==========
+        function escapeHtml(str) {
+            return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+        // Escaped value, or a muted placeholder when the field is empty.
+        function orPlaceholder(value, placeholder) {
+            return value.trim() ? escapeHtml(value) : `<span class="ph">${escapeHtml(placeholder)}</span>`;
+        }
+        const cents = n => Math.round((n + Number.EPSILON) * 100) / 100;
+        function money(n) {
+            return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+        const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        function formatDateDisplay(dateStr) {
+            if (!dateStr) return '';
+            const d = new Date(dateStr + 'T00:00:00');
+            return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+        }
+        function toInputDate(date) {
+            const p = n => String(n).padStart(2, '0');
+            return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}`;
+        }
+
+        // ========== STORAGE / PROFILES ==========
         const STORE_KEY = 'invoiceGenerator.v1';   // legacy single-profile key
         const STORE_KEY_V2 = 'invoiceGenerator.v2';
         const SAVED_FIELDS = ['bizName', 'bizTagline', 'invNumber', 'paymentTerms', 'remitTo', 'remitInstructions',
             'email', 'phone', 'billName', 'billAttn', 'billAddr1', 'billAddr2', 'taxRate', 'thanksMsg'];
+        const FIELD_DEFAULTS = { paymentTerms: 'net15', taxRate: '0', thanksMsg: 'Thank you for your business!' };
         const DEFAULT_PROFILE_NAME = 'Default';
+        const blankItem = () => ({ desc: '', qty: '1', rate: '0.00' });
 
         // store = { version: 2, active: 'name', profiles: { name: { field: value, ..., lineItems: [...] } } }
         let store = { version: 2, active: DEFAULT_PROFILE_NAME, profiles: {} };
+        let lineItems = [blankItem()];
+        let storageOk = true;
 
         function sanitizeProfile(p) {
             const out = {};
@@ -696,21 +541,31 @@
         }
 
         function validName(name) {
-            return typeof name === 'string' && name.trim() && !['__proto__', 'constructor', 'prototype'].includes(name.trim());
+            return typeof name === 'string' && name.trim() !== '' && !['__proto__', 'constructor', 'prototype'].includes(name.trim());
         }
-
-        function hasProfile(name) {
-            return Object.prototype.hasOwnProperty.call(store.profiles, name);
-        }
+        function hasProfile(name) { return Object.prototype.hasOwnProperty.call(store.profiles, name); }
 
         function currentProfileData() {
             const data = { lineItems: lineItems.map(it => ({ ...it })) };
-            SAVED_FIELDS.forEach(id => data[id] = document.getElementById(id).value);
+            SAVED_FIELDS.forEach(id => { data[id] = $(id).value; });
             return data;
         }
 
+        function setSaveStatus() {
+            const el = $('saveStatus');
+            el.classList.toggle('warn', !storageOk);
+            el.textContent = storageOk
+                ? 'Changes are saved in this browser'
+                : 'Browser storage is unavailable, so changes won’t be saved. Use Export profiles to keep a copy.';
+        }
+
         function persist() {
-            try { localStorage.setItem(STORE_KEY_V2, JSON.stringify(store)); } catch (e) { /* storage unavailable */ }
+            try {
+                localStorage.setItem(STORE_KEY_V2, JSON.stringify(store));
+                if (!storageOk) { storageOk = true; setSaveStatus(); }
+            } catch (e) {
+                if (storageOk) { storageOk = false; setSaveStatus(); showToast('Couldn’t save to this browser. Use Export profiles to keep a copy.', 5000); }
+            }
         }
 
         function saveState() {
@@ -728,23 +583,20 @@
                     });
                     if (typeof v2.active === 'string' && hasProfile(v2.active)) store.active = v2.active;
                 } else {
-                    // migrate legacy single-profile data
-                    const v1 = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
+                    const v1 = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');   // migrate legacy data
                     if (v1) store.profiles[DEFAULT_PROFILE_NAME] = sanitizeProfile(v1);
                 }
-            } catch (e) { /* ignore corrupt data */ }
+            } catch (e) { /* unreadable or unavailable: start fresh */ }
             if (!Object.keys(store.profiles).length) store.profiles[DEFAULT_PROFILE_NAME] = {};
             if (!hasProfile(store.active)) store.active = Object.keys(store.profiles)[0];
+            try { localStorage.setItem('invoiceGenerator.probe', '1'); localStorage.removeItem('invoiceGenerator.probe'); }
+            catch (e) { storageOk = false; }
         }
 
         function applyFields(p) {
             p = p || {};
-            SAVED_FIELDS.forEach(id => {
-                const el = document.getElementById(id);
-                if (typeof p[id] === 'string') el.value = p[id];
-                else el.value = (id === 'paymentTerms') ? 'net15' : (id === 'taxRate') ? '0' : (id === 'thanksMsg') ? 'Thank you for your business!' : '';
-            });
-            lineItems = (p.lineItems && p.lineItems.length) ? p.lineItems.map(it => ({ ...it })) : [{ desc: '', qty: '1', rate: '0.00' }];
+            SAVED_FIELDS.forEach(id => { $(id).value = typeof p[id] === 'string' ? p[id] : (FIELD_DEFAULTS[id] ?? ''); });
+            lineItems = (p.lineItems && p.lineItems.length) ? p.lineItems.map(it => ({ ...it })) : [blankItem()];
         }
 
         function refreshAfterApply() {
@@ -754,7 +606,7 @@
         }
 
         function fillProfileSelect() {
-            const sel = document.getElementById('profileSelect');
+            const sel = $('profileSelect');
             sel.innerHTML = '';
             Object.keys(store.profiles).forEach(name => {
                 const opt = document.createElement('option');
@@ -774,17 +626,72 @@
             refreshAfterApply();
         }
 
-        function promptName(message, initial) {
-            const raw = prompt(message, initial || '');
-            if (raw === null) return null;
-            const name = raw.trim();
-            if (!validName(name)) { showToast('⚠ Invalid name'); return null; }
-            if (hasProfile(name)) { showToast('⚠ A profile with that name already exists'); return null; }
-            return name;
+        // ========== DIALOGS ==========
+        function askName({ title, action, initial = '', current = null }) {
+            return new Promise(resolve => {
+                const dlg = $('nameDialog'), input = $('nameInput'), err = $('nameError');
+                $('nameTitle').textContent = title;
+                $('nameSubmit').textContent = action;
+                input.value = initial;
+                input.removeAttribute('aria-invalid');
+                err.textContent = '';
+                dlg.returnValue = '';
+                dlg._current = current;
+                const onClose = () => {
+                    dlg.removeEventListener('close', onClose);
+                    resolve(dlg.returnValue === 'ok' ? input.value.trim() : null);
+                };
+                dlg.addEventListener('close', onClose);
+                dlg.showModal();
+                input.select();
+            });
         }
 
-        function newProfile() {
-            const name = promptName('Name for the new (blank) profile:');
+        function nameProblem(name, current) {
+            if (!name) return 'Enter a name for the profile.';
+            if (!validName(name)) return 'That name isn’t available. Try another.';
+            if (name !== current && hasProfile(name)) return 'A profile with that name already exists. Choose a different name.';
+            return '';
+        }
+
+        $('nameForm').addEventListener('submit', e => {
+            const dlg = $('nameDialog'), input = $('nameInput');
+            const problem = nameProblem(input.value.trim(), dlg._current);
+            if (problem) {
+                e.preventDefault();
+                $('nameError').textContent = problem;
+                input.setAttribute('aria-invalid', 'true');
+                input.focus();
+            }
+        });
+        $('nameInput').addEventListener('input', () => {
+            $('nameError').textContent = '';
+            $('nameInput').removeAttribute('aria-invalid');
+        });
+        $('nameCancel').addEventListener('click', () => $('nameDialog').close('cancel'));
+
+        function askConfirm({ title, message, action }) {
+            return new Promise(resolve => {
+                const dlg = $('confirmDialog');
+                $('confirmTitle').textContent = title;
+                $('confirmMessage').textContent = message;
+                $('confirmOk').textContent = action;
+                dlg.returnValue = '';
+                const onClose = () => {
+                    dlg.removeEventListener('close', onClose);
+                    resolve(dlg.returnValue === 'confirm');
+                };
+                dlg.addEventListener('close', onClose);
+                dlg.showModal();
+                $('confirmCancel').focus();
+            });
+        }
+        $('confirmCancel').addEventListener('click', () => $('confirmDialog').close('cancel'));
+        $('confirmOk').addEventListener('click', () => $('confirmDialog').close('confirm'));
+
+        // ========== PROFILE ACTIONS ==========
+        async function newProfile() {
+            const name = await askName({ title: 'New profile', action: 'Create' });
             if (!name) return;
             saveState();
             store.profiles[name] = {};
@@ -793,40 +700,65 @@
             fillProfileSelect();
             persist();
             refreshAfterApply();
+            showToast(`Created profile “${name}”`);
         }
 
-        function duplicateProfile() {
-            const name = promptName('Name for the copy:', store.active + ' copy');
+        async function duplicateProfile() {
+            const name = await askName({ title: 'Duplicate profile', action: 'Duplicate', initial: store.active + ' copy' });
             if (!name) return;
             saveState();
             store.profiles[name] = currentProfileData();
             store.active = name;
             fillProfileSelect();
             persist();
-            showToast('✓ Profile duplicated');
+            showToast(`Duplicated as “${name}”`);
         }
 
-        function renameProfile() {
-            const name = promptName('Rename profile to:', store.active);
-            if (!name) return;
+        async function renameProfile() {
+            const old = store.active;
+            const name = await askName({ title: 'Rename profile', action: 'Rename', initial: old, current: old });
+            if (!name || name === old) return;
             saveState();
             const rebuilt = {};
-            Object.keys(store.profiles).forEach(k => { rebuilt[k === store.active ? name : k] = store.profiles[k]; });
+            Object.keys(store.profiles).forEach(k => { rebuilt[k === old ? name : k] = store.profiles[k]; });
             store.profiles = rebuilt;
             store.active = name;
             fillProfileSelect();
             persist();
+            showToast(`Renamed to “${name}”`);
         }
 
-        function deleteProfile() {
-            if (Object.keys(store.profiles).length <= 1) { showToast('⚠ Can\'t delete the only profile'); return; }
-            if (!confirm('Delete profile "' + store.active + '"? This cannot be undone.')) return;
-            delete store.profiles[store.active];
+        async function deleteProfile() {
+            if (Object.keys(store.profiles).length <= 1) { showToast('You need at least one profile. Create another first, or use Clear all saved data.', 4000); return; }
+            const name = store.active;
+            const ok = await askConfirm({
+                title: 'Delete profile?',
+                message: `“${name}” and its line items will be removed from this browser. This can’t be undone. Export first if you want a copy.`,
+                action: 'Delete profile'
+            });
+            if (!ok) return;
+            delete store.profiles[name];
             store.active = Object.keys(store.profiles)[0];
             applyFields(store.profiles[store.active]);
             fillProfileSelect();
             persist();
             refreshAfterApply();
+            showToast(`Deleted profile “${name}”`);
+        }
+
+        async function clearAll() {
+            const ok = await askConfirm({
+                title: 'Clear all saved data?',
+                message: 'Every profile will be removed from this browser and the form will reset. This can’t be undone. Export first if you want a copy. Your dark mode setting is kept.',
+                action: 'Clear all data'
+            });
+            if (!ok) return;
+            try { localStorage.removeItem(STORE_KEY); localStorage.removeItem(STORE_KEY_V2); } catch (e) { /* ignore */ }
+            store = { version: 2, active: DEFAULT_PROFILE_NAME, profiles: { [DEFAULT_PROFILE_NAME]: {} } };
+            applyFields({});
+            fillProfileSelect();
+            refreshAfterApply();
+            showToast('All saved data cleared');
         }
 
         // ========== IMPORT / EXPORT ==========
@@ -836,12 +768,12 @@
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'invoice-generator-data.json';
+            a.download = `invoice-generator-profiles-${toInputDate(new Date())}.json`;
             document.body.appendChild(a);
             a.click();
             a.remove();
-            URL.revokeObjectURL(url);
-            showToast('✓ Exported');
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+            showToast('Exported all profiles');
         }
 
         function importData(input) {
@@ -849,15 +781,26 @@
             input.value = '';
             if (!file) return;
             const reader = new FileReader();
-            reader.onload = () => {
+            reader.onerror = () => showToast('Couldn’t read that file. Try choosing it again.', 4000);
+            reader.onload = async () => {
                 let data;
-                try { data = JSON.parse(reader.result); } catch (e) { showToast('⚠ Not a valid JSON file'); return; }
-                if (!data || typeof data.profiles !== 'object' || data.profiles === null) { showToast('⚠ Not an invoice generator export'); return; }
+                try { data = JSON.parse(reader.result); }
+                catch (e) { showToast('That file isn’t valid JSON. Choose a file exported from this page.', 5000); return; }
+                if (!data || typeof data.profiles !== 'object' || data.profiles === null) {
+                    showToast('That file doesn’t contain invoice profiles. Choose a file exported from this page.', 5000); return;
+                }
                 const incoming = Object.keys(data.profiles).filter(validName);
-                if (!incoming.length) { showToast('⚠ No profiles found in file'); return; }
+                if (!incoming.length) { showToast('No profiles were found in that file.', 4000); return; }
                 saveState();
                 const clashes = incoming.filter(hasProfile);
-                if (clashes.length && !confirm('These profiles already exist and will be overwritten:\n\n' + clashes.join('\n') + '\n\nContinue?')) return;
+                if (clashes.length) {
+                    const ok = await askConfirm({
+                        title: 'Replace existing profiles?',
+                        message: 'These profiles already exist here and will be replaced by the imported versions:\n\n' + clashes.map(n => '• ' + n).join('\n'),
+                        action: 'Replace and import'
+                    });
+                    if (!ok) return;
+                }
                 incoming.forEach(name => { store.profiles[name] = sanitizeProfile(data.profiles[name]); });
                 if (typeof data.active === 'string' && incoming.includes(data.active)) store.active = data.active;
                 else if (!incoming.includes(store.active)) store.active = incoming[0];
@@ -865,421 +808,336 @@
                 fillProfileSelect();
                 persist();
                 refreshAfterApply();
-                showToast('✓ Imported ' + incoming.length + ' profile' + (incoming.length === 1 ? '' : 's'));
+                showToast(`Imported ${incoming.length} profile${incoming.length === 1 ? '' : 's'}`);
             };
-            reader.onerror = () => showToast('⚠ Could not read file');
             reader.readAsText(file);
         }
 
-        // ========== INITIALIZATION ==========
-        function init() {
-            loadStore();
-            fillProfileSelect();
-            applyFields(store.profiles[store.active]);
-            const today = new Date();
-            const yyyy = today.getFullYear();
-            const mm = String(today.getMonth() + 1).padStart(2, '0');
-            const dd = String(today.getDate()).padStart(2, '0');
-            document.getElementById('dateIssued').value = `${yyyy}-${mm}-${dd}`;
-            updateDueDate();
-            renderLineItems();
-            updatePreview();
-        }
-
-        // ========== DUE DATE LOGIC ==========
+        // ========== DATES AND TERMS ==========
         function updateDueDate() {
-            const terms = document.getElementById('paymentTerms').value;
-            const dateIssuedVal = document.getElementById('dateIssued').value;
-            const dueDateInput = document.getElementById('dueDate');
-
-            if (!dateIssuedVal) return;
-
-            const issued = new Date(dateIssuedVal + 'T00:00:00');
-
-            if (terms === 'dueReceipt') {
-                dueDateInput.value = dateIssuedVal;
-            } else if (terms === 'net15') {
-                const due = new Date(issued);
-                due.setDate(due.getDate() + 15);
-                dueDateInput.value = formatDate(due);
-            } else if (terms === 'net30') {
-                const due = new Date(issued);
-                due.setDate(due.getDate() + 30);
-                dueDateInput.value = formatDate(due);
+            const terms = $('paymentTerms').value;
+            const issuedVal = $('dateIssued').value;
+            const dueInput = $('dueDate');
+            if (issuedVal) {
+                const issued = new Date(issuedVal + 'T00:00:00');
+                const offsets = { dueReceipt: 0, net15: 15, net30: 30 };
+                if (terms in offsets) {
+                    const due = new Date(issued);
+                    due.setDate(due.getDate() + offsets[terms]);
+                    dueInput.value = toInputDate(due);
+                } else if (!dueInput.value) {
+                    dueInput.value = issuedVal;
+                }
             }
             updatePreview();
         }
 
+        // Editing the due date by hand switches terms to Custom when it no longer matches the preset.
         function syncCustomTerm() {
-            const terms = document.getElementById('paymentTerms').value;
-            const dateIssuedVal = document.getElementById('dateIssued').value;
-            const dueDateVal = document.getElementById('dueDate').value;
-            if (!dateIssuedVal || !dueDateVal || terms === 'custom') return;
-
-            const issued = new Date(dateIssuedVal + 'T00:00:00');
-            const due = new Date(dueDateVal + 'T00:00:00');
-            const diffDays = Math.round((due - issued) / (1000 * 60 * 60 * 24));
-
-            if (terms === 'net15' && diffDays !== 15) document.getElementById('paymentTerms').value = 'custom';
-            else if (terms === 'net30' && diffDays !== 30) document.getElementById('paymentTerms').value = 'custom';
-            else if (terms === 'dueReceipt' && diffDays !== 0) document.getElementById('paymentTerms').value = 'custom';
+            const terms = $('paymentTerms').value;
+            const issuedVal = $('dateIssued').value, dueVal = $('dueDate').value;
+            const offsets = { dueReceipt: 0, net15: 15, net30: 30 };
+            if (issuedVal && dueVal && terms in offsets) {
+                const diff = Math.round((new Date(dueVal + 'T00:00:00') - new Date(issuedVal + 'T00:00:00')) / 86400000);
+                if (diff !== offsets[terms]) $('paymentTerms').value = 'custom';
+            }
+            updatePreview();
         }
 
-        function formatDate(date) {
-            const y = date.getFullYear();
-            const m = String(date.getMonth() + 1).padStart(2, '0');
-            const d = String(date.getDate()).padStart(2, '0');
-            return `${y}-${m}-${d}`;
-        }
-
-        function formatDateDisplay(dateStr) {
-            if (!dateStr) return '';
-            const d = new Date(dateStr + 'T00:00:00');
-            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-            return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
-        }
-
-        function getTermsDisplay() {
-            const val = document.getElementById('paymentTerms').value;
-            const map = { net15: 'Net 15', net30: 'Net 30', dueReceipt: 'Due Upon Receipt', custom: 'Custom' };
-            return map[val] || 'Custom';
+        function termsDisplay() {
+            const opt = $('paymentTerms').selectedOptions[0];
+            return opt && $('paymentTerms').value === 'custom' ? 'Custom' : (opt ? opt.textContent : '');
         }
 
         // ========== LINE ITEMS ==========
-        function renderLineItems() {
-            const container = document.getElementById('lineItemsContainer');
-            container.innerHTML = '';
-            lineItems.forEach((item, index) => {
+        function qtyOf(item) { const q = parseFloat(item.qty); return isNaN(q) ? 1 : q; }
+        function rateOf(item) { return parseFloat(item.rate) || 0; }
+        function lineAmount(item) { return cents(qtyOf(item) * rateOf(item)); }
+        function calcSubtotal() { return cents(lineItems.reduce((s, it) => s + lineAmount(it), 0)); }
+        function calcTaxRate() { return parseFloat($('taxRate').value) || 0; }
+        function calcTax() { return cents(calcSubtotal() * calcTaxRate() / 100); }
+        function calcTotal() { return cents(calcSubtotal() + calcTax()); }
+
+        function makeCell(cls, labelText, itemNo, control) {
+            const cell = document.createElement('div');
+            cell.className = 'cell ' + cls;
+            const label = document.createElement('label');
+            label.htmlFor = control.id;
+            label.textContent = labelText;
+            const hidden = document.createElement('span');
+            hidden.className = 'sr-only';
+            hidden.textContent = ` (item ${itemNo})`;
+            label.appendChild(hidden);
+            cell.append(label, control);
+            return cell;
+        }
+
+        function renderLineItems(focusIndex) {
+            const list = $('lineItems');
+            list.innerHTML = '';
+            lineItems.forEach((item, i) => {
+                const n = i + 1;
                 const row = document.createElement('div');
-                row.className = 'line-item-row';
-                const qtyNum = parseFloat(item.qty);
-                const quantityForCalc = (!isNaN(qtyNum) && qtyNum > 0) ? qtyNum : 1;
-                const rateNum = parseFloat(item.rate) || 0;
-                const amount = quantityForCalc * rateNum;
-                row.innerHTML = `
-                    <input type="text" value="${escapeHtml(item.desc)}" placeholder="Description" oninput="updateLineItem(${index}, 'desc', this.value)">
-                    <input type="text" value="${escapeHtml(item.qty)}" placeholder="Qty" oninput="updateLineItem(${index}, 'qty', this.value)">
-                    <input type="number" value="${item.rate}" placeholder="0.00" step="0.01" min="0" oninput="updateLineItem(${index}, 'rate', this.value)">
-                    <span class="amount-display">$${amount.toFixed(2)}</span>
-                    <button class="btn-icon" title="Remove" onclick="removeLineItem(${index})">✕</button>
-                `;
-                container.appendChild(row);
+                row.className = 'item-row';
+
+                const desc = document.createElement('input');
+                desc.type = 'text'; desc.id = `li-desc-${i}`; desc.value = item.desc; desc.autocomplete = 'off';
+                desc.addEventListener('input', () => updateLineItem(i, 'desc', desc.value));
+
+                const qty = document.createElement('input');
+                qty.type = 'text'; qty.id = `li-qty-${i}`; qty.value = item.qty; qty.autocomplete = 'off';
+                qty.addEventListener('input', () => updateLineItem(i, 'qty', qty.value));
+
+                const rate = document.createElement('input');
+                rate.type = 'number'; rate.id = `li-rate-${i}`; rate.value = item.rate;
+                rate.step = '0.01'; rate.min = '0'; rate.inputMode = 'decimal';
+                rate.addEventListener('input', () => updateLineItem(i, 'rate', rate.value));
+
+                const amount = document.createElement('div');
+                amount.className = 'amount'; amount.id = `li-amount-${i}`;
+                amount.textContent = money(lineAmount(item));
+
+                const remove = document.createElement('button');
+                remove.type = 'button'; remove.className = 'btn'; remove.id = `li-remove-${i}`;
+                remove.textContent = 'Remove';
+                remove.setAttribute('aria-label', `Remove item ${n}`);
+                remove.addEventListener('click', () => removeLineItem(i));
+
+                const amountCell = document.createElement('div');
+                amountCell.className = 'cell cell-amount';
+                const amountLabel = document.createElement('span');
+                amountLabel.className = 'cell-label';
+                amountLabel.textContent = 'Amount';
+                amountCell.append(amountLabel, amount);
+
+                const removeCell = document.createElement('div');
+                removeCell.className = 'cell cell-remove';
+                removeCell.appendChild(remove);
+
+                row.append(
+                    makeCell('cell-desc', 'Description', n, desc),
+                    makeCell('cell-qty', 'Quantity', n, qty),
+                    makeCell('cell-rate', 'Rate ($)', n, rate),
+                    amountCell,
+                    removeCell
+                );
+                list.appendChild(row);
             });
+            if (focusIndex !== undefined) {
+                const el = $(`li-desc-${Math.min(focusIndex, lineItems.length - 1)}`);
+                if (el) el.focus();
+            }
         }
 
         function addLineItem() {
-            lineItems.push({ desc: '', qty: '1', rate: '0.00' });
-            renderLineItems();
+            lineItems.push(blankItem());
+            renderLineItems(lineItems.length - 1);
             updatePreview();
         }
 
         function removeLineItem(index) {
-            if (lineItems.length <= 1) {
-                lineItems = [{ desc: '', qty: '1', rate: '0.00' }];
-            } else {
-                lineItems.splice(index, 1);
-            }
-            renderLineItems();
+            if (lineItems.length <= 1) lineItems = [blankItem()];
+            else lineItems.splice(index, 1);
+            renderLineItems(index);
             updatePreview();
         }
 
         function updateLineItem(index, field, value) {
             lineItems[index][field] = value;
+            const out = $(`li-amount-${index}`);
+            if (out) out.textContent = money(lineAmount(lineItems[index]));
             updatePreview();
         }
 
-        function escapeHtml(str) {
-            const div = document.createElement('div');
-            div.textContent = str;
-            return div.innerHTML;
+        // ========== FORM VALUES ==========
+        function readValues() {
+            const v = id => $(id).value;
+            return {
+                bizName: v('bizName'), bizTagline: v('bizTagline').trim(), invNumber: v('invNumber'),
+                issued: formatDateDisplay(v('dateIssued')), due: formatDateDisplay(v('dueDate')), terms: termsDisplay(),
+                remitTo: v('remitTo'), remitInstructions: v('remitInstructions').trim(),
+                email: v('email').trim(), phone: v('phone').trim(),
+                billName: v('billName'), billAttn: v('billAttn').trim(), billAddr1: v('billAddr1').trim(), billAddr2: v('billAddr2').trim(),
+                thanks: v('thanksMsg').trim(),
+                taxRate: calcTaxRate(), subtotal: calcSubtotal(), tax: calcTax(), total: calcTotal()
+            };
         }
 
-        // ========== CALCULATIONS ==========
-        function calcSubtotal() {
-            return lineItems.reduce((sum, item) => {
-                const qtyNum = parseFloat(item.qty);
-                const qty = (!isNaN(qtyNum) && qtyNum > 0) ? qtyNum : 1;
-                const rate = parseFloat(item.rate) || 0;
-                return sum + (qty * rate);
-            }, 0);
+        // ========== PREVIEW ==========
+        function updateSummary(d) {
+            let html = `<dt>Subtotal</dt><dd>${money(d.subtotal)}</dd>`;
+            if (d.taxRate > 0) html += `<dt>Tax (${d.taxRate}%)</dt><dd>${money(d.tax)}</dd>`;
+            html += `<dt>Total</dt><dd class="total">${money(d.total)}</dd>`;
+            $('summary').innerHTML = html;
         }
 
-        function calcTax() {
-            const subtotal = calcSubtotal();
-            const taxRate = parseFloat(document.getElementById('taxRate').value) || 0;
-            return subtotal * (taxRate / 100);
+        function updateDueNote() {
+            const issued = $('dateIssued').value, due = $('dueDate').value;
+            $('dueNote').textContent = (issued && due && due < issued) ? 'The due date is before the issue date.' : '';
         }
 
-        function calcTotal() {
-            return calcSubtotal() + calcTax();
-        }
-
-        // ========== BUILD PREVIEW ==========
         function updatePreview() {
             saveState();
-            const container = document.getElementById('invoicePreview');
-            const bizName = document.getElementById('bizName').value || 'Your Business Name';
-            const bizTagline = document.getElementById('bizTagline').value.trim();
-            const invNumber = document.getElementById('invNumber').value || 'INV-0001';
-            const dateIssued = document.getElementById('dateIssued').value;
-            const dueDate = document.getElementById('dueDate').value;
-            const remitTo = document.getElementById('remitTo').value || 'Your Name';
-            const remitInstructions = document.getElementById('remitInstructions').value || '';
-            const email = document.getElementById('email').value || '';
-            const phone = document.getElementById('phone').value || '';
-            const billName = document.getElementById('billName').value || 'Client Name';
-            const billAttn = document.getElementById('billAttn').value || '';
-            const billAddr1 = document.getElementById('billAddr1').value || '';
-            const billAddr2 = document.getElementById('billAddr2').value || '';
-            const thanksMsg = document.getElementById('thanksMsg').value || 'Thank you for your business!';
-            const taxRate = parseFloat(document.getElementById('taxRate').value) || 0;
-            const subtotal = calcSubtotal();
-            const tax = calcTax();
-            const total = calcTotal();
+            updateDueNote();
+            const d = readValues();
+            updateSummary(d);
 
-            // Remit block
-            let remitBlock = `<span class="inv-name">${escapeHtml(remitTo)}</span>`;
-            if (remitInstructions.trim()) {
-                remitBlock += `<br>${escapeHtml(remitInstructions)}`;
-            }
+            let remit = `<span class="inv-name">${orPlaceholder(d.remitTo, 'Name to pay')}</span>`;
+            if (d.remitInstructions) remit += `<br>${escapeHtml(d.remitInstructions)}`;
 
-            // Line items HTML
-            let lineItemsHTML = '';
-            lineItems.forEach(item => {
-                const qtyNum = parseFloat(item.qty);
-                const qty = (!isNaN(qtyNum) && qtyNum > 0) ? qtyNum : 1;
-                const rate = parseFloat(item.rate) || 0;
-                const amount = qty * rate;
-                lineItemsHTML += `
-                    <tr>
-                        <td><strong>${escapeHtml(item.desc) || '—'}</strong></td>
-                        <td>${escapeHtml(item.qty) || '—'}</td>
-                        <td class="ralign">$${rate.toFixed(2)}</td>
-                        <td class="ralign">$${amount.toFixed(2)}</td>
-                    </tr>`;
-            });
+            const billLines = [
+                `<span class="inv-name">${orPlaceholder(d.billName, 'Client name')}</span>`,
+                d.billAttn ? 'Attn: ' + escapeHtml(d.billAttn) : '',
+                d.billAddr1 ? escapeHtml(d.billAddr1) : '',
+                d.billAddr2 ? escapeHtml(d.billAddr2) : ''
+            ].filter(Boolean).join('<br>');
 
-            const taxRowHTML = taxRate > 0 ? `
-                <tr>
-                    <td>Tax (${taxRate}%)</td>
-                    <td class="ralign">$${tax.toFixed(2)}</td>
-                </tr>` : '';
+            const rows = lineItems.map(item => {
+                const qtyText = item.qty.trim();
+                return `<tr>
+                    <td><strong>${item.desc.trim() ? escapeHtml(item.desc) : '—'}</strong></td>
+                    <td>${qtyText ? escapeHtml(qtyText) : '1'}</td>
+                    <td class="r">${money(rateOf(item))}</td>
+                    <td class="r">${money(lineAmount(item))}</td>
+                </tr>`;
+            }).join('');
 
-            container.innerHTML = `
+            const contact = [d.email, d.phone].filter(Boolean).map(escapeHtml).join(' &nbsp;|&nbsp; ');
+
+            $('invoicePreview').innerHTML = `
                 <div class="inv-header">
-                    <div class="inv-logo">
-                        <div class="inv-company">${escapeHtml(bizName)}</div>
-                        ${bizTagline ? `<div class="inv-tagline">${escapeHtml(bizTagline)}</div>` : ''}
+                    <div>
+                        <div class="inv-company">${orPlaceholder(d.bizName, 'Your business name')}</div>
+                        ${d.bizTagline ? `<div class="inv-tagline">${escapeHtml(d.bizTagline)}</div>` : ''}
                     </div>
                     <div class="inv-title">
                         <div class="inv-label">Invoice</div>
-                        <div class="inv-number">#${escapeHtml(invNumber)}</div>
+                        <div class="inv-number">${d.invNumber.trim() ? '#' + escapeHtml(d.invNumber) : '<span class="ph">No number</span>'}</div>
                     </div>
                 </div>
-
                 <div class="inv-meta-grid">
-                    <div class="inv-meta">
-                        <h3>Remit To</h3>
-                        <p>${remitBlock}</p>
-                    </div>
-                    <div class="inv-meta">
-                        <h3>Bill To</h3>
-                        <p>
-                            <span class="inv-name">${escapeHtml(billName)}</span><br>
-                            ${billAttn ? 'Attn: ' + escapeHtml(billAttn) + '<br>' : ''}
-                            ${billAddr1 ? escapeHtml(billAddr1) + '<br>' : ''}
-                            ${escapeHtml(billAddr2)}
-                        </p>
-                    </div>
+                    <div class="inv-meta"><h3>Remit to</h3><p>${remit}</p></div>
+                    <div class="inv-meta"><h3>Bill to</h3><p>${billLines}</p></div>
                 </div>
-
                 <div class="inv-detail-row">
-                    <div class="inv-detail-item">
-                        <span class="inv-dlabel">Date Issued</span>
-                        <span class="inv-dvalue">${formatDateDisplay(dateIssued)}</span>
-                    </div>
-                    <div class="inv-detail-item">
-                        <span class="inv-dlabel">Payment Terms</span>
-                        <span class="inv-dvalue">${getTermsDisplay()}</span>
-                    </div>
-                    <div class="inv-detail-item">
-                        <span class="inv-dlabel">Due Date</span>
-                        <span class="inv-dvalue due">${formatDateDisplay(dueDate)}</span>
-                    </div>
+                    <div class="inv-detail-item"><span class="inv-dlabel">Date issued</span><span class="inv-dvalue">${escapeHtml(d.issued)}</span></div>
+                    <div class="inv-detail-item"><span class="inv-dlabel">Payment terms</span><span class="inv-dvalue">${escapeHtml(d.terms)}</span></div>
+                    <div class="inv-detail-item"><span class="inv-dlabel">Due date</span><span class="inv-dvalue due">${escapeHtml(d.due)}</span></div>
                 </div>
-
-                <table class="inv-table">
-                    <thead>
-                        <tr>
-                            <th>Description</th>
-                            <th>Qty / Detail</th>
-                            <th class="ralign">Rate</th>
-                            <th class="ralign">Amount</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${lineItemsHTML}
-                    </tbody>
-                </table>
-
-                <div class="inv-totals-wrap">
-                    <table class="inv-totals-table">
-                        <tr><td>Subtotal</td><td>$${subtotal.toFixed(2)}</td></tr>
-                        ${taxRowHTML}
-                        <tr class="grand"><td>Total Due</td><td>$${total.toFixed(2)}</td></tr>
+                <div class="table-scroll">
+                    <table class="inv-table">
+                        <thead><tr><th scope="col">Description</th><th scope="col">Quantity</th><th scope="col" class="r">Rate</th><th scope="col" class="r">Amount</th></tr></thead>
+                        <tbody>${rows}</tbody>
                     </table>
                 </div>
-
-                <div class="inv-footer">
-                    <div class="inv-thanks">${escapeHtml(thanksMsg)}</div>
-                    <div class="inv-contact">${[email, phone].filter(Boolean).map(escapeHtml).join(' &nbsp;|&nbsp; ')}</div>
+                <div class="inv-totals-wrap">
+                    <table class="inv-totals">
+                        <tr><td>Subtotal</td><td>${money(d.subtotal)}</td></tr>
+                        ${d.taxRate > 0 ? `<tr><td>Tax (${d.taxRate}%)</td><td>${money(d.tax)}</td></tr>` : ''}
+                        <tr class="grand"><td>Total due</td><td>${money(d.total)}</td></tr>
+                    </table>
                 </div>
+                ${(d.thanks || contact) ? `<div class="inv-footer">
+                    ${d.thanks ? `<div class="inv-thanks">${escapeHtml(d.thanks)}</div>` : ''}
+                    ${contact ? `<div class="inv-contact">${contact}</div>` : ''}
+                </div>` : ''}
             `;
         }
 
-        // ========== PLAINTEXT GENERATION ==========
+        // ========== PLAIN TEXT ==========
         function generatePlaintext() {
-            const bizName = document.getElementById('bizName').value || 'Your Business Name';
-            const bizTagline = document.getElementById('bizTagline').value.trim();
-            const invNumber = document.getElementById('invNumber').value || 'INV-0001';
-            const dateIssued = formatDateDisplay(document.getElementById('dateIssued').value);
-            const dueDate = formatDateDisplay(document.getElementById('dueDate').value);
-            const termsDisplay = getTermsDisplay();
-            const remitTo = document.getElementById('remitTo').value || 'Your Name';
-            const remitInstructions = document.getElementById('remitInstructions').value || '';
-            const email = document.getElementById('email').value || '';
-            const phone = document.getElementById('phone').value || '';
-            const billName = document.getElementById('billName').value || 'Client Name';
-            const billAttn = document.getElementById('billAttn').value || '';
-            const billAddr1 = document.getElementById('billAddr1').value || '';
-            const billAddr2 = document.getElementById('billAddr2').value || '';
-            const thanksMsg = document.getElementById('thanksMsg').value || 'Thank you for your business!';
-            const subtotal = calcSubtotal();
-            const tax = calcTax();
-            const total = calcTotal();
-            const taxRate = parseFloat(document.getElementById('taxRate').value) || 0;
+            const d = readValues();
+            const W = 44;
+            const border = '═'.repeat(W), thin = '─'.repeat(W);
+            const center = t => ' '.repeat(Math.max(0, Math.floor((W - t.length) / 2))) + t;
+            const lr = (l, r) => l + ' '.repeat(Math.max(2, W - l.length - r.length)) + r;
+            const pad = '           ';
 
-            // Top border
-            const border = '═════════════════════════════════';
-            const thinBorder = '─────────────────────────────────';
+            const out = [];
+            out.push(border, center(d.bizName.trim() || 'Your business name'));
+            if (d.bizTagline) out.push(center(d.bizTagline));
+            out.push(center('Invoice ' + (d.invNumber.trim() ? '#' + d.invNumber.trim() : '')).trimEnd(), border, '');
 
-            let text = '';
-            text += border + '\n';
-            text += bizName + '\n';
-            if (bizTagline) text += bizTagline + '\n';
-            text += 'Invoice ' + invNumber + '\n';
-            text += border + '\n\n';
+            out.push('Remit to:   ' + (d.remitTo.trim() || 'Name to pay'));
+            if (d.remitInstructions) out.push(pad + d.remitInstructions);
+            out.push('', 'Bill to:    ' + (d.billName.trim() || 'Client name'));
+            if (d.billAttn) out.push(pad + 'Attn: ' + d.billAttn);
+            if (d.billAddr1) out.push(pad + d.billAddr1);
+            if (d.billAddr2) out.push(pad + d.billAddr2);
+            out.push(thin);
 
-            // Remit / Bill To
-            text += 'Remit To:  ' + remitTo + '\n';
-            if (remitInstructions.trim()) {
-                text += '           ' + remitInstructions + '\n';
-            }
-            text += '\n';
-            text += 'Bill To:   ' + billName + '\n';
-            if (billAttn) text += '           Attn: ' + billAttn + '\n';
-            if (billAddr1) text += '           ' + billAddr1 + '\n';
-            if (billAddr2) text += '           ' + billAddr2 + '\n';
-            text += thinBorder + '\n';
-
-            // Dates
-            text += 'Date Issued:     ' + dateIssued + '\n';
-            text += 'Payment Terms:   ' + termsDisplay + '\n';
-            text += 'Due Date:        ' + dueDate + '\n';
-            text += thinBorder + '\n';
-
-            // Line items header
-            text += 'Description' + ' '.repeat(30) + 'Amount\n';
-            text += thinBorder + '\n';
-
-            // Line items
+            out.push('Date issued:    ' + d.issued, 'Payment terms:  ' + d.terms, 'Due date:       ' + d.due, thin);
             lineItems.forEach(item => {
-                const qtyNum = parseFloat(item.qty);
-                const qty = (!isNaN(qtyNum) && qtyNum > 0) ? qtyNum : 1;
-                const rate = parseFloat(item.rate) || 0;
-                const amount = qty * rate;
-                const desc = item.desc || '—';
-                const detail = item.qty || '—';
-                // Build line: description (truncated to fit) then amount right-aligned
-                const combinedDesc = desc + '  (' + detail + ' × $' + rate.toFixed(2) + ')';
-                const amountStr = '$' + amount.toFixed(2);
-                const padding = Math.max(1, 42 - combinedDesc.length);
-                text += combinedDesc + ' '.repeat(padding) + amountStr + '\n';
+                out.push(item.desc.trim() || '(no description)');
+                out.push(lr('  ' + (item.qty.trim() || '1') + ' × ' + money(rateOf(item)), money(lineAmount(item))));
             });
-
-            text += thinBorder + '\n';
-
-            // Totals
-            const subtotalStr = '$' + subtotal.toFixed(2);
-            const totalStr = '$' + total.toFixed(2);
-            text += ' '.repeat(30) + 'Subtotal:   ' + subtotalStr + '\n';
-            if (taxRate > 0) {
-                const taxStr = '$' + tax.toFixed(2);
-                text += ' '.repeat(30) + 'Tax (' + taxRate + '%): ' + taxStr + '\n';
-            }
-            text += ' '.repeat(30) + 'Total Due:  ' + totalStr + '\n';
-            text += border + '\n';
-            text += thanksMsg + '\n\n';
-            text += [email, phone].filter(Boolean).join('  |  ') + '\n';
-            text += border + '\n';
-
-            // Payment reminder
-            if (remitInstructions.trim()) {
-                text += '\nPayment: ' + remitInstructions + '\n';
-            }
-            text += 'Due by: ' + dueDate + '\n';
-
-            return text;
+            out.push(thin, lr('Subtotal', money(d.subtotal)));
+            if (d.taxRate > 0) out.push(lr(`Tax (${d.taxRate}%)`, money(d.tax)));
+            out.push(lr('Total due', money(d.total)), border);
+            if (d.thanks) out.push(d.thanks, '');
+            const contact = [d.email, d.phone].filter(Boolean).join('  |  ');
+            if (contact) out.push(contact);
+            if (d.thanks || contact) out.push(border);
+            out.push('');
+            if (d.remitInstructions) out.push('Payment: ' + d.remitInstructions);
+            out.push('Due by: ' + d.due);
+            return out.join('\n') + '\n';
         }
 
-        function openPlaintextModal() {
+        function openPlaintext() {
             updatePreview();
-            document.getElementById('plaintextOutput').value = generatePlaintext();
-            document.getElementById('plaintextModal').classList.add('active');
+            $('plainOutput').value = generatePlaintext();
+            $('plainNote').textContent = '';
+            $('plainNote').classList.remove('err');
+            $('plainDialog').showModal();
         }
 
-        function closePlaintextModal() {
-            document.getElementById('plaintextModal').classList.remove('active');
+        async function copyPlaintext() {
+            const ta = $('plainOutput');
+            try {
+                await navigator.clipboard.writeText(ta.value);
+                $('plainDialog').close();
+                showToast('Copied to clipboard');
+            } catch (e) {
+                ta.focus();
+                ta.select();
+                $('plainNote').textContent = 'Couldn’t copy automatically. The text is selected, so press Ctrl+C (or Cmd+C) to copy it.';
+                $('plainNote').classList.add('err');
+            }
         }
 
-        function copyPlaintext() {
-            const textarea = document.getElementById('plaintextOutput');
-            textarea.select();
-            textarea.setSelectionRange(0, 99999);
-            navigator.clipboard.writeText(textarea.value).then(() => {
-                showToast('✓ Copied to clipboard!');
-            }).catch(() => {
-                showToast('⚠ Could not copy — please select and copy manually');
-            });
-            closePlaintextModal();
-        }
+        $('plainClose').addEventListener('click', () => $('plainDialog').close());
+        $('plainCopy').addEventListener('click', copyPlaintext);
+        $('plainDialog').addEventListener('click', e => { if (e.target === $('plainDialog')) $('plainDialog').close(); });
 
-        function showToast(message) {
-            const toast = document.getElementById('toast');
-            toast.textContent = message;
-            toast.classList.add('show');
-            setTimeout(() => toast.classList.remove('show'), 2000);
-        }
-
-        // Close modal on overlay click
-        document.getElementById('plaintextModal').addEventListener('click', function(e) {
-            if (e.target === this) closePlaintextModal();
+        // ========== WIRING ==========
+        SAVED_FIELDS.forEach(id => {
+            const el = $(id);
+            if (id === 'paymentTerms') el.addEventListener('change', updateDueDate);
+            else el.addEventListener('input', updatePreview);
         });
+        $('dateIssued').addEventListener('change', updateDueDate);
+        $('dueDate').addEventListener('change', syncCustomTerm);
+        $('profileSelect').addEventListener('change', e => switchProfile(e.target.value));
+        $('newProfileBtn').addEventListener('click', newProfile);
+        $('renameBtn').addEventListener('click', renameProfile);
+        $('duplicateBtn').addEventListener('click', duplicateProfile);
+        $('deleteBtn').addEventListener('click', deleteProfile);
+        $('clearBtn').addEventListener('click', clearAll);
+        $('exportBtn').addEventListener('click', exportData);
+        $('importBtn').addEventListener('click', () => $('importFile').click());
+        $('importFile').addEventListener('change', e => importData(e.target));
+        $('addItemBtn').addEventListener('click', addLineItem);
+        $('printBtn').addEventListener('click', () => { updatePreview(); window.print(); });
+        $('plainBtn').addEventListener('click', openPlaintext);
 
-        // ========== ACTIONS ==========
-        function printInvoice() {
-            updatePreview();
-            window.print();
-        }
-
-        function resetForm() {
-            if (!confirm('Clear ALL saved profiles on this device? Export first if you want a backup.')) return;
-            try { localStorage.removeItem(STORE_KEY); localStorage.removeItem(STORE_KEY_V2); } catch (e) {}
-            location.reload();
-        }
-
-        // ========== KICK OFF ==========
-        init();
+        // ========== START ==========
+        loadStore();
+        setSaveStatus();
+        fillProfileSelect();
+        $('dateIssued').value = toInputDate(new Date());
+        applyFields(store.profiles[store.active]);
+        refreshAfterApply();
     </script>
 </body>
 </html>
