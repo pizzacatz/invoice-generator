@@ -205,6 +205,40 @@
             background: #1e293b;
         }
 
+        /* === Profile bar === */
+        .profile-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+            padding: 12px 14px;
+            background: var(--input-bg);
+            border: 1.5px solid var(--border);
+            border-radius: 10px;
+        }
+        .profile-bar label {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--light-muted);
+        }
+        .profile-bar select {
+            font-family: inherit;
+            font-size: 14px;
+            padding: 8px 10px;
+            border: 1.5px solid var(--input-border);
+            border-radius: 8px;
+            background: white;
+            color: var(--text);
+            min-width: 160px;
+        }
+        .profile-bar .spacer { flex: 1; }
+        .btn-sm {
+            padding: 8px 14px;
+            font-size: 13px;
+        }
+
         /* === Buttons === */
         .button-bar {
             display: flex;
@@ -505,6 +539,20 @@
     <div class="editor-panel" id="editorPanel">
         <h2>📝 Invoice Editor</h2>
 
+        <!-- Profiles + import/export -->
+        <div class="profile-bar">
+            <label for="profileSelect">Profile</label>
+            <select id="profileSelect" onchange="switchProfile(this.value)"></select>
+            <button class="btn btn-secondary btn-sm" onclick="newProfile()">+ New</button>
+            <button class="btn btn-secondary btn-sm" onclick="duplicateProfile()">Duplicate</button>
+            <button class="btn btn-secondary btn-sm" onclick="renameProfile()">Rename</button>
+            <button class="btn btn-secondary btn-sm" onclick="deleteProfile()">Delete</button>
+            <span class="spacer"></span>
+            <button class="btn btn-secondary btn-sm" onclick="exportData()">⬇ Export JSON</button>
+            <button class="btn btn-secondary btn-sm" onclick="document.getElementById('importFile').click()">⬆ Import JSON</button>
+            <input type="file" id="importFile" accept="application/json,.json" style="display:none" onchange="importData(this)">
+        </div>
+
         <!-- Invoice meta -->
         <div class="editor-grid">
             <div class="field-group">
@@ -596,7 +644,7 @@
         <div class="button-bar">
             <button class="btn btn-primary" onclick="printInvoice()">🖨️ Print / Save as PDF</button>
             <button class="btn btn-copy" onclick="openPlaintextModal()">📋 Copy Plaintext for Email</button>
-            <button class="btn btn-secondary" onclick="resetForm()">↺ Clear Saved Data</button>
+            <button class="btn btn-secondary" onclick="resetForm()">↺ Clear All Saved Data</button>
         </div>
     </div>
 
@@ -623,31 +671,211 @@
             { desc: '', qty: '1', rate: '0.00' }
         ];
 
-        // ========== LOCAL STORAGE ==========
-        const STORE_KEY = 'invoiceGenerator.v1';
+        // ========== LOCAL STORAGE / PROFILES ==========
+        const STORE_KEY = 'invoiceGenerator.v1';   // legacy single-profile key
+        const STORE_KEY_V2 = 'invoiceGenerator.v2';
         const SAVED_FIELDS = ['bizName', 'bizTagline', 'invNumber', 'paymentTerms', 'remitTo', 'remitInstructions',
             'email', 'phone', 'billName', 'billAttn', 'billAddr1', 'billAddr2', 'taxRate', 'thanksMsg'];
+        const DEFAULT_PROFILE_NAME = 'Default';
 
-        function saveState() {
-            try {
-                const data = { lineItems };
-                SAVED_FIELDS.forEach(id => data[id] = document.getElementById(id).value);
-                localStorage.setItem(STORE_KEY, JSON.stringify(data));
-            } catch (e) { /* storage unavailable */ }
+        // store = { version: 2, active: 'name', profiles: { name: { field: value, ..., lineItems: [...] } } }
+        let store = { version: 2, active: DEFAULT_PROFILE_NAME, profiles: {} };
+
+        function sanitizeProfile(p) {
+            const out = {};
+            if (!p || typeof p !== 'object') return out;
+            SAVED_FIELDS.forEach(id => { if (typeof p[id] === 'string') out[id] = p[id]; });
+            if (Array.isArray(p.lineItems) && p.lineItems.length) {
+                out.lineItems = p.lineItems.map(it => ({
+                    desc: String((it && it.desc) ?? ''),
+                    qty: String((it && it.qty) ?? '1'),
+                    rate: String((it && it.rate) ?? '0.00')
+                }));
+            }
+            return out;
         }
 
-        function loadState() {
+        function validName(name) {
+            return typeof name === 'string' && name.trim() && !['__proto__', 'constructor', 'prototype'].includes(name.trim());
+        }
+
+        function hasProfile(name) {
+            return Object.prototype.hasOwnProperty.call(store.profiles, name);
+        }
+
+        function currentProfileData() {
+            const data = { lineItems: lineItems.map(it => ({ ...it })) };
+            SAVED_FIELDS.forEach(id => data[id] = document.getElementById(id).value);
+            return data;
+        }
+
+        function persist() {
+            try { localStorage.setItem(STORE_KEY_V2, JSON.stringify(store)); } catch (e) { /* storage unavailable */ }
+        }
+
+        function saveState() {
+            store.profiles[store.active] = currentProfileData();
+            persist();
+        }
+
+        function loadStore() {
             try {
-                const data = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
-                if (!data) return;
-                SAVED_FIELDS.forEach(id => { if (typeof data[id] === 'string') document.getElementById(id).value = data[id]; });
-                if (Array.isArray(data.lineItems) && data.lineItems.length) lineItems = data.lineItems;
+                const v2 = JSON.parse(localStorage.getItem(STORE_KEY_V2) || 'null');
+                if (v2 && v2.profiles && typeof v2.profiles === 'object') {
+                    store = { version: 2, active: DEFAULT_PROFILE_NAME, profiles: {} };
+                    Object.keys(v2.profiles).forEach(name => {
+                        if (validName(name)) store.profiles[name] = sanitizeProfile(v2.profiles[name]);
+                    });
+                    if (typeof v2.active === 'string' && hasProfile(v2.active)) store.active = v2.active;
+                } else {
+                    // migrate legacy single-profile data
+                    const v1 = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
+                    if (v1) store.profiles[DEFAULT_PROFILE_NAME] = sanitizeProfile(v1);
+                }
             } catch (e) { /* ignore corrupt data */ }
+            if (!Object.keys(store.profiles).length) store.profiles[DEFAULT_PROFILE_NAME] = {};
+            if (!hasProfile(store.active)) store.active = Object.keys(store.profiles)[0];
+        }
+
+        function applyFields(p) {
+            p = p || {};
+            SAVED_FIELDS.forEach(id => {
+                const el = document.getElementById(id);
+                if (typeof p[id] === 'string') el.value = p[id];
+                else el.value = (id === 'paymentTerms') ? 'net15' : (id === 'taxRate') ? '0' : (id === 'thanksMsg') ? 'Thank you for your business!' : '';
+            });
+            lineItems = (p.lineItems && p.lineItems.length) ? p.lineItems.map(it => ({ ...it })) : [{ desc: '', qty: '1', rate: '0.00' }];
+        }
+
+        function refreshAfterApply() {
+            updateDueDate();
+            renderLineItems();
+            updatePreview();
+        }
+
+        function fillProfileSelect() {
+            const sel = document.getElementById('profileSelect');
+            sel.innerHTML = '';
+            Object.keys(store.profiles).forEach(name => {
+                const opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = name;
+                sel.appendChild(opt);
+            });
+            sel.value = store.active;
+        }
+
+        function switchProfile(name) {
+            if (!hasProfile(name)) return;
+            saveState();
+            store.active = name;
+            applyFields(store.profiles[name]);
+            persist();
+            refreshAfterApply();
+        }
+
+        function promptName(message, initial) {
+            const raw = prompt(message, initial || '');
+            if (raw === null) return null;
+            const name = raw.trim();
+            if (!validName(name)) { showToast('⚠ Invalid name'); return null; }
+            if (hasProfile(name)) { showToast('⚠ A profile with that name already exists'); return null; }
+            return name;
+        }
+
+        function newProfile() {
+            const name = promptName('Name for the new (blank) profile:');
+            if (!name) return;
+            saveState();
+            store.profiles[name] = {};
+            store.active = name;
+            applyFields({});
+            fillProfileSelect();
+            persist();
+            refreshAfterApply();
+        }
+
+        function duplicateProfile() {
+            const name = promptName('Name for the copy:', store.active + ' copy');
+            if (!name) return;
+            saveState();
+            store.profiles[name] = currentProfileData();
+            store.active = name;
+            fillProfileSelect();
+            persist();
+            showToast('✓ Profile duplicated');
+        }
+
+        function renameProfile() {
+            const name = promptName('Rename profile to:', store.active);
+            if (!name) return;
+            saveState();
+            const rebuilt = {};
+            Object.keys(store.profiles).forEach(k => { rebuilt[k === store.active ? name : k] = store.profiles[k]; });
+            store.profiles = rebuilt;
+            store.active = name;
+            fillProfileSelect();
+            persist();
+        }
+
+        function deleteProfile() {
+            if (Object.keys(store.profiles).length <= 1) { showToast('⚠ Can\'t delete the only profile'); return; }
+            if (!confirm('Delete profile "' + store.active + '"? This cannot be undone.')) return;
+            delete store.profiles[store.active];
+            store.active = Object.keys(store.profiles)[0];
+            applyFields(store.profiles[store.active]);
+            fillProfileSelect();
+            persist();
+            refreshAfterApply();
+        }
+
+        // ========== IMPORT / EXPORT ==========
+        function exportData() {
+            saveState();
+            const blob = new Blob([JSON.stringify(store, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'invoice-generator-data.json';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+            showToast('✓ Exported');
+        }
+
+        function importData(input) {
+            const file = input.files && input.files[0];
+            input.value = '';
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                let data;
+                try { data = JSON.parse(reader.result); } catch (e) { showToast('⚠ Not a valid JSON file'); return; }
+                if (!data || typeof data.profiles !== 'object' || data.profiles === null) { showToast('⚠ Not an invoice generator export'); return; }
+                const incoming = Object.keys(data.profiles).filter(validName);
+                if (!incoming.length) { showToast('⚠ No profiles found in file'); return; }
+                saveState();
+                const clashes = incoming.filter(hasProfile);
+                if (clashes.length && !confirm('These profiles already exist and will be overwritten:\n\n' + clashes.join('\n') + '\n\nContinue?')) return;
+                incoming.forEach(name => { store.profiles[name] = sanitizeProfile(data.profiles[name]); });
+                if (typeof data.active === 'string' && incoming.includes(data.active)) store.active = data.active;
+                else if (!incoming.includes(store.active)) store.active = incoming[0];
+                applyFields(store.profiles[store.active]);
+                fillProfileSelect();
+                persist();
+                refreshAfterApply();
+                showToast('✓ Imported ' + incoming.length + ' profile' + (incoming.length === 1 ? '' : 's'));
+            };
+            reader.onerror = () => showToast('⚠ Could not read file');
+            reader.readAsText(file);
         }
 
         // ========== INITIALIZATION ==========
         function init() {
-            loadState();
+            loadStore();
+            fillProfileSelect();
+            applyFields(store.profiles[store.active]);
             const today = new Date();
             const yyyy = today.getFullYear();
             const mm = String(today.getMonth() + 1).padStart(2, '0');
@@ -1045,8 +1273,8 @@
         }
 
         function resetForm() {
-            if (!confirm('Clear all saved invoice data on this device?')) return;
-            try { localStorage.removeItem(STORE_KEY); } catch (e) {}
+            if (!confirm('Clear ALL saved profiles on this device? Export first if you want a backup.')) return;
+            try { localStorage.removeItem(STORE_KEY); localStorage.removeItem(STORE_KEY_V2); } catch (e) {}
             location.reload();
         }
 
