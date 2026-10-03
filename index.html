@@ -1129,6 +1129,14 @@
         $('importFile').addEventListener('change', e => importData(e.target));
         $('addItemBtn').addEventListener('click', addLineItem);
         $('printBtn').addEventListener('click', () => { updatePreview(); window.print(); });
+
+        // Browsers use the page title as the default PDF filename, so set it for the print job.
+        const PAGE_TITLE = document.title;
+        window.addEventListener('beforeprint', () => {
+            const m = /^(\d{4})-(\d{2})/.exec($('dateIssued').value);
+            document.title = m ? `INVOICE ${m[1]} ${m[2]}` : PAGE_TITLE;
+        });
+        window.addEventListener('afterprint', () => { document.title = PAGE_TITLE; });
         $('plainBtn').addEventListener('click', openPlaintext);
 
         // ========== START ==========
